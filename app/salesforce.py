@@ -72,7 +72,7 @@ def soql_quote(value: str, like: bool = False) -> str:
     return value
 
 
-def map_fields(values: dict, field_map: dict) -> dict:
+def map_fields(values: dict, field_map: dict, value_maps: dict | None = None) -> dict:
     out = {}
     for app_key, sf_field in field_map.items():
         if not sf_field:
@@ -80,7 +80,11 @@ def map_fields(values: dict, field_map: dict) -> dict:
         value = values.get(app_key)
         if value is None or (isinstance(value, str) and not value.strip()):
             continue
-        out[sf_field] = value.strip() if isinstance(value, str) else value
+        value = value.strip() if isinstance(value, str) else value
+        translate = (value_maps or {}).get(app_key)
+        if isinstance(translate, dict):
+            value = translate.get(value, value)
+        out[sf_field] = value
     return out
 
 
@@ -102,13 +106,26 @@ def validate(draft: dict, mapping: dict) -> list[str]:
         if not SF_ID.match(acc_choice.get("id") or ""):
             errors.append("Compte existant : identifiant Salesforce invalide.")
     else:
-        if not (company.get("company_name") or "").strip():
-            errors.append("Raison sociale obligatoire.")
-        if mapping["account"]["fields"].get("rc_number") and not (company.get("rc_number") or "").strip():
-            errors.append("Numéro RC obligatoire.")
-        ice = (company.get("ice") or "").strip()
-        if ice and not re.fullmatch(r"\d{15}", ice):
-            errors.append("L'ICE doit comporter 15 chiffres.")
+        def val(key: str) -> str:
+            return str(company.get(key) or "").strip()
+
+        for key, label in (("company_name", "Nom du compte"), ("sole_proprietorship", "Entreprise individuelle"),
+                           ("address", "Adresse de facturation"), ("postal_code", "Code postal de facturation"),
+                           ("city", "Ville de facturation")):
+            if not val(key):
+                errors.append(f"« {label} » obligatoire.")
+        if mapping["account"]["fields"].get("rc_number") and not val("rc_number"):
+            errors.append("« Numéro de RC » obligatoire.")
+        if val("sole_proprietorship") and val("sole_proprietorship") not in {"Oui", "Non"}:
+            errors.append("« Entreprise individuelle » : choisissez Oui ou Non.")
+        if val("postal_code") and not re.fullmatch(r"\d{5}", val("postal_code")):
+            errors.append("Le code postal marocain comporte 5 chiffres.")
+        if val("ice") and not re.fullmatch(r"\d{15}", val("ice")):
+            errors.append("Le numéro ICE doit comporter 15 chiffres.")
+        if val("tax_id") and not val("tax_id_type"):
+            errors.append("Choisissez le « Type de numéro d'identification fiscale ».")
+        if val("tax_id_type") and not val("tax_id"):
+            errors.append("« Numéro d'identification fiscale » manquant pour le type choisi.")
         seg = mapping.get("segment", {})
         if seg.get("enabled"):
             for f in seg.get("fields", []):
@@ -156,7 +173,7 @@ def build_plan(draft: dict, mapping: dict) -> dict:
         account_ref = draft["account_choice"]["id"]
         summary.append(f"Compte réutilisé (non modifié) : {draft['account_choice'].get('name') or account_ref}")
     else:
-        body = {**acc_cfg.get("defaults", {}), **map_fields(draft["company"], acc_cfg["fields"])}
+        body = {**acc_cfg.get("defaults", {}), **map_fields(draft["company"], acc_cfg["fields"], acc_cfg.get("value_maps"))}
         subrequests.append({"method": "POST", "url": f"{base}/{acc_cfg['sobject']}", "referenceId": "account", "body": body})
         account_ref = "@{account.id}"
         summary.append(f"Nouveau compte : {draft['company'].get('company_name')}")

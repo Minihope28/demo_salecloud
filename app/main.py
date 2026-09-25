@@ -14,7 +14,8 @@ from starlette.middleware.sessions import SessionMiddleware
 from . import auth
 from .config import BASE_DIR, Settings, load_settings
 from .drafts import DOC_KINDS, DraftLocked, DraftNotFound, DraftStore
-from .extraction import DocumentError, analyse_document
+from .address import COUNTRY, analyse_address, check_postal, load_reference
+from .extraction import DocumentError, TesseractOCR, analyse_document, find_tesseract
 from .salesforce import MockSalesforce, SalesforceAuthError, SalesforceClient, SalesforceError, ValidationError, fold, build_plan, validate
 from .submission import SubmissionBusy, submit_draft
 
@@ -23,8 +24,12 @@ SAMPLES = {"rc": BASE_DIR / "samples" / "RC_exemple_fictif.pdf",
            "fiscal": BASE_DIR / "samples" / "Attestation_fiscale_exemple_fictif.pdf"}
 DOC_LABELS = {"rc": "RC", "fiscal": "Document fiscal"}
 COMPARED_FIELDS = ["company_name", "rc_number", "ice", "tax_id"]
-COMPANY_FIELDS = ["company_name", "common_name", "rc_number", "legal_form", "ice", "tax_id", "address", "city", "postal_code", "country"]
-HINT_FIELDS = ["manager_name", "activity", "capital"]
+# Mêmes champs que le formulaire « Nouveau compte » de Salesforce (le pays est toujours le Maroc).
+COMPANY_FIELDS = ["company_name", "common_name", "company_phone", "sole_proprietorship", "rc_number", "tax_id_type",
+                  "tax_id", "address", "postal_code", "city", "region", "ice"]
+HINT_FIELDS = ["legal_form", "manager_name", "activity", "capital"]
+TAX_ID_TYPES = ["Numéro de TVA", "Numéro d'identification fiscale", "GST Number", "ABN", "CPF Number", "CNPJ Number", "PAN Number"]
+DEFAULT_TAX_ID_TYPE = "Numéro d'identification fiscale"
 
 
 def create_app(settings: Settings | None = None, sf_transport: httpx.BaseTransport | None = None) -> FastAPI:
@@ -34,10 +39,21 @@ def create_app(settings: Settings | None = None, sf_transport: httpx.BaseTranspo
     tokens = auth.TokenStore()
     mock_sf = None if settings.is_live else MockSalesforce(settings.mapping)
 
+    tess = None if settings.ocr_mode == "off" else find_tesseract(settings.tesseract_cmd)
+    if settings.ocr_mode == "on" and not tess:
+        raise RuntimeError("OCR=on mais Tesseract est introuvable (installer Tesseract ou renseigner TESSERACT_CMD).")
+    ocr = TesseractOCR(tess, lang=settings.ocr_lang) if tess else None
+
+    ref_paths = [settings.postal_codes_path, settings.postal_codes_path.with_suffix(".xlsx")]
+    if not settings.is_live:
+        ref_paths.append(BASE_DIR / "samples" / "codes_postaux_demo.csv")
+    postal_ref, postal_status = load_reference(ref_paths)
+
     app = FastAPI(title="Dossier client — préparation Salesforce", docs_url=None, redoc_url=None)
     app.add_middleware(SessionMiddleware, secret_key=settings.session_secret, https_only=settings.cookie_secure,
                        same_site="lax", session_cookie="dossier_session", max_age=auth.SESSION_TTL)
     app.state.settings, app.state.store, app.state.tokens, app.state.mock_sf = settings, store, tokens, mock_sf
+    app.state.ocr, app.state.postal_ref = ocr, postal_ref
 
     # ------------------------------------------------------------------ erreurs
     @app.exception_handler(ValidationError)
@@ -162,6 +178,10 @@ def create_app(settings: Settings | None = None, sf_transport: httpx.BaseTranspo
             "max_upload_mb": settings.max_upload_mb,
             "max_pdf_pages": settings.max_pdf_pages,
             "account_fields_sent": {k: bool(v) for k, v in m["account"]["fields"].items()},
+            "country": COUNTRY,
+            "tax_id_types": TAX_ID_TYPES,
+            "ocr": bool(ocr),
+            "postal_reference": {"loaded": bool(postal_ref), "status": postal_status},
             "segment": {"enabled": bool(m.get("segment", {}).get("enabled")),
                         "fields": [{k: f.get(k) for k in ("key", "label", "type", "required", "options")}
                                    for f in m.get("segment", {}).get("fields", [])]},
@@ -192,7 +212,14 @@ def create_app(settings: Settings | None = None, sf_transport: httpx.BaseTranspo
             raise HTTPException(400, detail="Format invalide.")
         with store.lock(draft_id):
             draft = store.get(draft_id, user["id"])
-            return public(store.update_sections(draft, changes))
+            draft = store.update_sections(draft, changes)
+            # Une valeur modifiée à la main n'est plus « lue dans le document ».
+            company = draft["company"]
+            draft["company_sources"] = {k: v for k, v in draft["company_sources"].items()
+                                        if str(company.get(k) or "") == str(v.get("value") or "")}
+            if "company" in changes:
+                draft["address_check"] = check_postal(company.get("city", ""), company.get("postal_code", ""), postal_ref)
+            return public(store.save(draft))
 
     @app.delete("/api/drafts/{draft_id}", dependencies=[Depends(same_origin)])
     def delete_draft(draft_id: str, user: dict = Depends(current_user)):
@@ -208,12 +235,13 @@ def create_app(settings: Settings | None = None, sf_transport: httpx.BaseTranspo
             raise HTTPException(404, detail="Type de document inconnu.")
         if draft["status"] not in {"draft", "error"}:
             raise DraftLocked("Ce dossier a déjà été envoyé dans Salesforce.")
-        analysis = analyse_document(data, DOC_LABELS[kind], settings.max_upload_bytes, settings.max_pdf_pages)
+        analysis = analyse_document(data, DOC_LABELS[kind], settings.max_upload_bytes, settings.max_pdf_pages, ocr=ocr)
         store.store_file(draft["id"], kind, data)
         safe_name = re.sub(r"[^\w.\- ]", "_", filename or f"{kind}.pdf")[:120]
         draft["documents"][kind] = {"filename": safe_name, "size": len(data), "pages": analysis["pages"],
                                     "text_found": analysis["text_found"], "warning": analysis["warning"],
-                                    "fields": analysis["fields"], "uploaded": False}
+                                    "fields": analysis["fields"], "unreadable": analysis["unreadable"],
+                                    "ocr_used": analysis["ocr_used"], "uploaded": False}
         _merge_suggestions(draft)
         return analysis
 
@@ -224,9 +252,18 @@ def create_app(settings: Settings | None = None, sf_transport: httpx.BaseTranspo
             for key, hit in draft["documents"].get(kind, {}).get("fields", {}).items():
                 if key in HINT_FIELDS:
                     draft["hints"].setdefault(key, hit)
-                elif key in COMPANY_FIELDS and not (company.get(key) or "").strip():
+                elif key in COMPANY_FIELDS and not str(company.get(key) or "").strip():
                     company[key] = hit["value"]
                     sources[key] = hit
+        if company.get("tax_id") and not company.get("tax_id_type"):
+            company["tax_id_type"] = DEFAULT_TAX_ID_TYPE
+            sources["tax_id_type"] = {**sources.get("tax_id", {}), "value": DEFAULT_TAX_ID_TYPE,
+                                      "snippet": "Type proposé car un identifiant fiscal a été trouvé"}
+        # Adresse lue dans un document : on sépare rue / code postal / ville (une seule fois).
+        addr_src = sources.get("address")
+        if addr_src and not addr_src.get("split"):
+            _apply_address_analysis(draft, company["address"], addr_src)
+        draft["address_check"] = check_postal(company.get("city", ""), company.get("postal_code", ""), postal_ref)
         conflicts = []
         rc_f = draft["documents"].get("rc", {}).get("fields", {})
         fi_f = draft["documents"].get("fiscal", {}).get("fields", {})
@@ -235,6 +272,25 @@ def create_app(settings: Settings | None = None, sf_transport: httpx.BaseTranspo
             if a and b and _comparable(a) != _comparable(b) and not (_comparable(a) in _comparable(b) or _comparable(b) in _comparable(a)):
                 conflicts.append({"field": key, "rc": a, "fiscal": b})
         draft["conflicts"] = conflicts
+
+    def _apply_address_analysis(draft: dict, full_address: str, origin: dict | None) -> dict:
+        company, sources = draft["company"], draft["company_sources"]
+        found = analyse_address(full_address, postal_ref)
+        label = f"Adresse ({origin['source']})" if origin else "Adresse"
+        for key in ("city", "postal_code", "region"):
+            hit = found.get(key)
+            if hit and not str(company.get(key) or "").strip():
+                company[key] = hit["value"]
+                sources[key] = {"value": hit["value"], "source": label, "page": (origin or {}).get("page"),
+                                "method": "déduction", "snippet": f"{hit['how']} — adresse lue : {full_address}"}
+        if found.get("street"):
+            company["address"] = found["street"]["value"]
+            if "address" in sources:
+                sources["address"] = {**sources["address"], "value": found["street"]["value"], "split": True,
+                                      "snippet": f"Adresse complète lue : {full_address}"}
+        elif "address" in sources:
+            sources["address"]["split"] = True
+        return found
 
     def _comparable(value: str) -> str:
         return re.sub(r"[^a-z0-9]", "", fold(value))
@@ -284,10 +340,35 @@ def create_app(settings: Settings | None = None, sf_transport: httpx.BaseTranspo
     def check_mapping(sf=Depends(salesforce)):
         return sf.check_mapping()
 
+    # ------------------------------------------------------------------ adresse
+    @app.post("/api/drafts/{draft_id}/address/analyse", dependencies=[Depends(same_origin)])
+    def analyse_draft_address(draft_id: str, user: dict = Depends(current_user)):
+        """Bouton « Déduire la ville et le code postal » : adresse saisie à la main."""
+        with store.lock(draft_id):
+            draft = store.get(draft_id, user["id"])
+            if draft["status"] not in {"draft", "error", "uncertain"}:
+                raise DraftLocked("Ce dossier a déjà été envoyé dans Salesforce.")
+            found = _apply_address_analysis(draft, draft["company"].get("address", ""), None)
+            draft["address_check"] = check_postal(draft["company"].get("city", ""), draft["company"].get("postal_code", ""), postal_ref)
+            draft = store.save(draft)
+            return {**public(draft), "address_notes": found["notes"]}
+
+    @app.get("/api/address/check")
+    def address_check(city: str = "", postal_code: str = "", user: dict = Depends(current_user)):
+        return check_postal(city, postal_code, postal_ref)
+
     @app.get("/api/drafts/{draft_id}/preview")
     def preview(draft_id: str, user: dict = Depends(current_user)):
         draft = store.get(draft_id, user["id"])
-        return {"errors": validate(draft, settings.mapping), "summary": build_plan(draft, settings.mapping)["summary"]}
+        warnings = []
+        if draft["account_choice"].get("mode") != "existing":
+            chk = check_postal(draft["company"].get("city", ""), draft["company"].get("postal_code", ""), postal_ref)
+            if chk["status"] == "warning" and chk["message"]:
+                warnings.append(chk["message"])
+        warnings += [f"RC et document fiscal différents ({c['field']}) : « {c['rc']} » / « {c['fiscal']} »"
+                     for c in draft.get("conflicts", [])]
+        return {"errors": validate(draft, settings.mapping), "warnings": warnings,
+                "summary": build_plan(draft, settings.mapping)["summary"]}
 
     @app.post("/api/drafts/{draft_id}/submit", dependencies=[Depends(same_origin)])
     def submit(draft_id: str, user: dict = Depends(current_user), sf=Depends(salesforce)):

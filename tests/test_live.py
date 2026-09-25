@@ -91,7 +91,8 @@ def login(client):
 def ready_draft(client, upload=True):
     did = client.post("/api/drafts", headers=HEADERS).json()["id"]
     client.put(f"/api/drafts/{did}", headers=HEADERS, json={
-        "company": {"company_name": "ATLAS DÉMO TRANS", "rc_number": "99001"},
+        "company": {"company_name": "ATLAS DÉMO TRANS", "rc_number": "99001", "sole_proprietorship": "Non",
+                    "address": "21 avenue de la Démonstration", "postal_code": "99100", "city": "Villetest"},
         "contact": {"last_name": "EXEMPLE", "email": "nadia@example.com"},
         "segment": {"segment_activity": "Transport de marchandises"},
         "opportunity": {"name": "Atlas - 3 camions", "close_date": "2026-12-31"},

@@ -125,3 +125,18 @@ button { font: inherit; cursor: pointer; border-radius: 8px; }
 .summary li::before { content: "✓"; color: var(--ok); font-weight: 700; }
 
 .toast { position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%); background: var(--text); color: #fff; padding: 10px 16px; border-radius: 8px; z-index: 10; max-width: calc(100% - 32px); }
+
+/* ---------------------------------------------------------------- formulaire « Nouveau compte » */
+.section-title { font-size: 15px; margin: 18px 0 10px; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
+.cols { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 24px; align-items: start; }
+.stack { display: flex; flex-direction: column; gap: 12px; }
+.field-row { display: grid; grid-template-columns: 1.4fr 1fr; gap: 12px; }
+.req { color: var(--err); margin-right: 2px; }
+.src.warn { background: var(--warn-bg); color: var(--warn); }
+.small, .alert.small { font-size: 12.5px; }
+.alert.small { padding: 7px 10px; margin: 0; }
+.small-link { font-size: 12.5px; align-self: flex-start; font-weight: 600; }
+input:disabled { background: #eef1f5; color: var(--muted); }
+@media (max-width: 720px) {
+  .cols, .field-row { grid-template-columns: 1fr; }
+}

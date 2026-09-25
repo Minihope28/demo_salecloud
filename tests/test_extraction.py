@@ -68,3 +68,46 @@ def test_rejects_non_pdf_and_big_files():
         analyse_document(b"hello", "RC", LIMIT, 40)
     with pytest.raises(DocumentError):
         analyse_document(b"%PDF-" + b"0" * 100, "RC", 50, 40)
+
+
+# --------------------------------------------------------------------------- PDF mal encodé
+from pathlib import Path  # noqa: E402
+
+from app.extraction import TesseractOCR, find_tesseract, is_garbled  # noqa: E402
+
+BROKEN = Path(__file__).parent / "fixtures" / "rc_encodage_casse.pdf"
+
+
+def test_garbled_values_are_never_proposed():
+    result = analyse_document(BROKEN.read_bytes(), "RC", LIMIT, 40)
+    assert "company_name" not in result["fields"] and "address" not in result["fields"]
+    assert result["unreadable"] == ["address", "company_name"]
+    assert "mal encodée" in result["warning"]
+    # les valeurs lisibles de la même page restent proposées
+    assert result["fields"]["rc_number"]["value"] == "99001"
+    assert result["fields"]["sole_proprietorship"]["value"] == "Non"
+
+
+@pytest.mark.skipif(not find_tesseract(), reason="Tesseract non installé")
+def test_ocr_reads_garbled_values():
+    result = analyse_document(BROKEN.read_bytes(), "RC", LIMIT, 40, ocr=TesseractOCR(find_tesseract()))
+    assert result["ocr_used"] is True and result["unreadable"] == []
+    assert result["fields"]["company_name"]["value"] == "ATLAS DÉMO TRANS"
+    assert result["fields"]["company_name"]["method"] == "OCR"
+    assert "Villetest" in result["fields"]["address"]["value"]
+
+
+def test_garble_detection():
+    assert is_garbled("ΔjɰγΗϟ□")
+    assert is_garbled("ƒΣɰϟ□□ΩO□6HϟΔHAΛɰϟ□□Δ9jΛ6ϟ□")
+    assert not is_garbled("SOCIÉTÉ ÉTOILE D'OR – Boulevard Hassan II, n° 12")
+
+
+def test_legal_form_label_variant_and_lowercase_sa():
+    data = _pdf(["Dénomination : EXEMPLE TRANS", "Forme juridique de la société : SARL",
+                 "Activité : transport pour sa clientèle"])
+    f = {k: v["value"] for k, v in analyse_document(data, "RC", LIMIT, 40)["fields"].items()}
+    assert f["legal_form"] == "SARL" and f["sole_proprietorship"] == "Non"
+    data = _pdf(["Nom : Ali EXEMPLE", "Activité : transport pour sa clientèle", "Adresse : 3 rue Test"])
+    fields = analyse_document(data, "RC", LIMIT, 40)["fields"]
+    assert "legal_form" not in fields  # « sa » n'est pas le sigle SA

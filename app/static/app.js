@@ -36,12 +36,23 @@ function toast(msg) {
   toast._t = setTimeout(() => t.classList.add("hidden"), 3500);
 }
 
+// Mêmes libellés que le formulaire « Nouveau compte » de Salesforce.
 const LABELS = {
-  company_name: "Raison sociale", common_name: "Nom usuel", rc_number: "Numéro RC", legal_form: "Forme juridique",
-  ice: "ICE", tax_id: "Identifiant fiscal (IF)", address: "Adresse", city: "Ville", postal_code: "Code postal",
-  country: "Pays", company_phone: "Téléphone de l'entreprise",
+  company_name: "Nom du compte", common_name: "Nom commun", company_phone: "Téléphone",
+  sole_proprietorship: "Entreprise individuelle", rc_number: "Numéro de RC",
+  tax_id_type: "Type de numéro d'identification fiscale", tax_id: "Numéro d'identification fiscale",
+  address: "Adresse de facturation", postal_code: "Code postal de facturation", city: "Ville de facturation",
+  region: "Région/Province de facturation", ice: "Numéro ICE",
 };
-const HINT_LABELS = { manager_name: "Gérant / dirigeant", activity: "Activité", capital: "Capital" };
+const HINT_LABELS = { legal_form: "Forme juridique", manager_name: "Gérant / dirigeant", activity: "Activité", capital: "Capital" };
+
+function normalisePhone(v) {
+  let p = String(v || "").replace(/[\s.\-()]/g, "");
+  if (/^00212\d{9}$/.test(p)) p = "+" + p.slice(2);
+  else if (/^212\d{9}$/.test(p)) p = "+" + p;
+  else if (/^0[5-8]\d{8}$/.test(p)) p = "+212" + p.slice(1);
+  return p || v;
+}
 const STATUS_LABELS = {
   draft: "En préparation", error: "À corriger", uncertain: "À vérifier", submitting: "Envoi en cours",
   records_created: "Pièces jointes à terminer", completed: "Créé dans Salesforce",
@@ -210,6 +221,8 @@ function docBlock(kind, title, hint) {
         <small class="muted">${doc.pages} page(s)</small>
         ${doc.warning ? `<div class="alert warn">${esc(doc.warning)}</div>`
           : `<ul><li>${fields.length ? `Informations repérées : ${esc(readable)}` : "Aucune information reconnue automatiquement : saisie manuelle."}</li></ul>`}
+        ${doc.warning && fields.length ? `<ul><li>Informations repérées : ${esc(readable)}</li></ul>` : ""}
+        ${(doc.unreadable || []).length ? `<div class="alert warn small">Illisible dans le PDF, à saisir : ${esc(doc.unreadable.map((k) => LABELS[k] || HINT_LABELS[k] || k).join(", "))}</div>` : ""}
         <div class="actions" style="margin-top:8px"><button class="btn small" data-remove="${kind}">Retirer</button></div>`
       : `
         <p class="muted" style="margin:4px 0 10px">${hint}</p>
@@ -221,19 +234,45 @@ function docBlock(kind, title, hint) {
     </div>`;
 }
 
+function sourceBadge(src) {
+  if (!src) return "";
+  const where = src.method === "déduction" ? `${src.source} · déduit` : `${src.source}${src.page ? ` · p.${src.page}` : ""}${src.method === "OCR" ? " · OCR" : ""}`;
+  return `<span class="src" title="${esc(src.snippet)}">${esc(where)} · à vérifier</span>`;
+}
+
 function companyField(key, opts = {}) {
   const d = state.draft;
   const src = d.company_sources[key];
   const sent = state.config.account_fields_sent[key] !== false;
-  const badge = src
-    ? `<span class="src" title="${esc(src.snippet)}">${esc(src.source)} · p.${esc(src.page)} · à vérifier</span>`
-    : !sent ? `<span class="src off" title="Ce champ n'est pas configuré pour être envoyé à Salesforce">non envoyé</span>` : "";
+  const unreadable = Object.values(d.documents || {}).some((doc) => (doc.unreadable || []).includes(key)) && !d.company[key];
+  const badge = src ? sourceBadge(src)
+    : unreadable ? `<span class="src warn" title="L'information existe dans le PDF mais ses caractères sont illisibles">illisible dans le PDF · à saisir</span>`
+    : !sent ? `<span class="src off" title="Ce champ n'est pas encore configuré pour être envoyé à Salesforce">non envoyé</span>` : "";
+  const value = d.company[key] ?? "";
+  const common = `name="${key}" data-section="company" class="${src ? "from-doc" : ""}"`;
+  let control;
+  if (opts.options) {
+    control = `<select ${common}><option value="">- Aucun -</option>
+      ${opts.options.map((o) => `<option ${o === value ? "selected" : ""}>${esc(o)}</option>`).join("")}</select>`;
+  } else if (opts.textarea) {
+    control = `<textarea ${common} rows="2" placeholder="${esc(opts.placeholder || "")}">${esc(value)}</textarea>`;
+  } else {
+    control = `<input type="${opts.type || "text"}" ${common} value="${esc(value)}" placeholder="${esc(opts.placeholder || "")}"
+      autocomplete="off" ${opts.inputmode ? `inputmode="${opts.inputmode}"` : ""}>`;
+  }
   return `
-    <label class="field ${opts.full ? "full" : ""}">
-      <span class="label-row"><span>${LABELS[key]}${opts.required ? " *" : ""}</span>${badge}</span>
-      <input type="text" name="${key}" data-section="company" value="${esc(d.company[key] || "")}"
-        class="${src ? "from-doc" : ""}" placeholder="${esc(opts.placeholder || "")}" autocomplete="off">
+    <label class="field ${opts.hidden ? "hidden" : ""}" data-field="${key}">
+      <span class="label-row"><span>${opts.required ? '<span class="req">*</span>' : ""}${LABELS[key]}</span>${badge}</span>
+      ${control}
+      ${opts.after || ""}
     </label>`;
+}
+
+function addressCheckHtml() {
+  const c = state.draft.address_check;
+  if (!c || !c.message) return "";
+  const cls = { ok: "ok", warning: "warn", error: "err" }[c.status] || "info";
+  return `<div class="alert ${cls} small">${esc(c.message)}</div>`;
 }
 
 function renderStep1() {
@@ -255,19 +294,39 @@ function renderStep1() {
     </div>
 
     <div class="card">
-      <h2>Vérifier l'entreprise</h2>
-      <p class="muted">Les valeurs lues dans les documents sont en bleu, avec leur source. Corrigez-les si besoin ; les champs vides restent à compléter.</p>
-      <div class="grid">
-        ${companyField("company_name", { required: true, full: true })}
-        ${companyField("rc_number", { required: true })}
-        ${companyField("legal_form", { placeholder: "SARL, SARL AU, SA…" })}
-        ${companyField("ice", { placeholder: "15 chiffres" })}
-        ${companyField("tax_id")}
-        ${companyField("address", { full: true })}
-        ${companyField("city")}
-        ${companyField("postal_code")}
-        ${companyField("country", { placeholder: "Maroc" })}
-        ${companyField("company_phone", { placeholder: "Standard de l'entreprise (pas forcément le WhatsApp du contact)" })}
+      <h2>Nouveau compte — vérifier les informations</h2>
+      <p class="muted">Mêmes champs que le formulaire Salesforce. Les valeurs lues dans les documents sont en bleu avec leur source ;
+        une information absente ou illisible reste vide pour être saisie à la main.</p>
+      <h3 class="section-title">Informations du compte</h3>
+      <div class="cols">
+        <div class="stack">
+          ${companyField("company_name", { required: true })}
+          ${companyField("common_name")}
+          ${companyField("company_phone", { type: "tel", placeholder: "+212…" })}
+          ${companyField("sole_proprietorship", { required: true, options: ["Oui", "Non"] })}
+        </div>
+        <div class="stack">
+          ${companyField("rc_number", { required: true, inputmode: "numeric" })}
+          ${companyField("tax_id_type", { options: state.config.tax_id_types })}
+          ${companyField("tax_id", { inputmode: "numeric", hidden: !d.company.tax_id_type && !d.company.tax_id })}
+        </div>
+      </div>
+      <h3 class="section-title">Adresse</h3>
+      <div class="cols">
+        <div class="stack">
+          <label class="field"><span class="label-row"><span><span class="req">*</span>Pays de facturation</span><span class="src off">fixe</span></span>
+            <input type="text" value="${esc(state.config.country)}" disabled></label>
+          ${companyField("address", { required: true, textarea: true, placeholder: "Rue, numéro, quartier",
+            after: `<button type="button" class="link small-link" id="addr-analyse">Déduire la ville et le code postal de l'adresse</button>` })}
+          ${companyField("postal_code", { required: true, inputmode: "numeric", placeholder: "5 chiffres" })}
+          <div class="field-row">
+            ${companyField("city", { required: true })}
+            ${companyField("region")}
+          </div>
+          <div id="addr-check">${addressCheckHtml()}</div>
+          ${companyField("ice", { inputmode: "numeric", placeholder: "15 chiffres" })}
+        </div>
+        <div class="stack"><p class="muted small">${esc(state.config.postal_reference.status)}</p></div>
       </div>
       ${hints.length ? `<div class="alert info"><strong>Lu aussi sur les documents (pour information) :</strong><ul>
         ${hints.map(([k, h]) => `<li>${esc(HINT_LABELS[k] || k)} : ${esc(h.value)}</li>`).join("")}</ul></div>` : ""}
@@ -288,6 +347,28 @@ function renderStep1() {
     </div>`;
 
   bindInputs("company");
+  const typeSel = $app.querySelector('select[name="tax_id_type"]');
+  if (typeSel) typeSel.addEventListener("input", () => {
+    $app.querySelector('[data-field="tax_id"]').classList.toggle("hidden", !typeSel.value && !d.company.tax_id);
+  });
+  const phone = $app.querySelector('input[name="company_phone"]');
+  if (phone) phone.addEventListener("blur", () => {
+    const v = normalisePhone(phone.value);
+    if (v !== phone.value) { phone.value = v; d.company.company_phone = v; scheduleSave(); }
+  });
+  ["city", "postal_code"].forEach((k) => {
+    const el = $app.querySelector(`[name="${k}"]`);
+    if (el) el.addEventListener("blur", checkAddress);
+  });
+  document.getElementById("addr-analyse").onclick = async () => {
+    await saveNow();
+    try {
+      const res = await api("POST", `/api/drafts/${d.id}/address/analyse`);
+      state.draft = res;
+      toast(res.address_notes && res.address_notes.length ? res.address_notes.join(" ") : "Adresse analysée : vérifiez la ville et le code postal.");
+    } catch (e) { toast(e.message); }
+    render();
+  };
   document.getElementById("verified").onchange = (e) => { d.verified = e.target.checked; scheduleSave(); };
   $app.querySelectorAll("[data-upload]").forEach((inp) => (inp.onchange = () => inp.files[0] && upload(inp.dataset.upload, inp.files[0])));
   $app.querySelectorAll("[data-sample]").forEach((b) => (b.onclick = () => sample(b.dataset.sample)));
@@ -307,6 +388,15 @@ function renderStep1() {
   const accNew = document.getElementById("acc-new");
   if (accNew) accNew.onclick = () => { d.account_choice = { mode: "new" }; d.contact_choice = { mode: "new" }; scheduleSave(); render(); };
   if (state.matches) renderMatches();
+}
+
+async function checkAddress() {
+  const c = state.draft.company;
+  try {
+    state.draft.address_check = await api("GET", `/api/address/check?${new URLSearchParams({ city: c.city || "", postal_code: c.postal_code || "" })}`);
+  } catch (_) { return; }
+  const box = document.getElementById("addr-check");
+  if (box) box.innerHTML = addressCheckHtml();
 }
 
 async function upload(kind, file) {
@@ -402,6 +492,7 @@ function renderStep2() {
           ${input("contact", "last_name", "Nom", "text", { required: true })}
           ${input("contact", "title", "Fonction", "text", { placeholder: "Gérant, responsable achats…" })}
           ${input("contact", "mobile", "Téléphone / WhatsApp", "tel", { placeholder: "+212 6…" })}
+          ${d.company.company_phone && !d.contact.mobile && !existing ? `<p class="small full" style="margin:-6px 0 0"><button type="button" class="link" id="same-phone">Même numéro que l'entreprise (${esc(d.company.company_phone)})</button></p>` : ""}
           ${input("contact", "email", "E-mail", "email", { full: true })}
         </div>
         <details style="margin-top:12px"><summary><strong>Coller un message WhatsApp</strong> pour repérer le téléphone et l'e-mail</summary>
@@ -424,6 +515,13 @@ function renderStep2() {
       </div></div>` : ""}`;
 
   ["contact", "segment", "opportunity"].forEach(bindInputs);
+  const mob = $app.querySelector('input[name="mobile"]');
+  if (mob) mob.addEventListener("blur", () => {
+    const v = normalisePhone(mob.value);
+    if (v !== mob.value) { mob.value = v; d.contact.mobile = v; scheduleSave(); }
+  });
+  const samePhone = document.getElementById("same-phone");
+  if (samePhone) samePhone.onclick = () => { d.contact.mobile = d.company.company_phone; scheduleSave(); render(); };
   $app.querySelectorAll('select[data-section="segment"]').forEach((s) => (s.onchange = () => { d.segment[s.name] = s.value; scheduleSave(); }));
 
   const um = document.getElementById("use-manager");
@@ -506,6 +604,7 @@ async function renderStep3() {
       <h2>Ce qui va être fait dans Salesforce</h2>
       <ul class="list summary">${p.summary.map((s) => `<li>${esc(s)}</li>`).join("")}</ul>
     </div>
+    ${(p.warnings || []).length ? `<div class="alert warn"><strong>Points d'attention (n'empêchent pas l'envoi) :</strong><ul>${p.warnings.map((m) => `<li>${esc(m)}</li>`).join("")}</ul></div>` : ""}
     ${p.errors.length ? `<div class="alert err"><strong>À compléter avant l'envoi :</strong><ul>${p.errors.map((m) => `<li>${esc(m)}</li>`).join("")}</ul></div>` : ""}
     <div class="card">
       <div class="actions">

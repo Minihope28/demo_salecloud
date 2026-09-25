@@ -5,7 +5,8 @@ from app.salesforce import build_plan, validate
 def complete_draft():
     d = new_draft("demo")
     d["company"] = {"company_name": "ATLAS DÉMO TRANS", "rc_number": "99001", "ice": "009988776600055",
-                    "legal_form": "SARL AU", "address": "21 avenue", "common_name": ""}
+                    "sole_proprietorship": "Non", "address": "21 avenue", "postal_code": "99100", "city": "Villetest",
+                    "tax_id_type": "Numéro d'identification fiscale", "tax_id": "99887766", "common_name": ""}
     d["contact"] = {"first_name": "Nadia", "last_name": "EXEMPLE", "mobile": "+212600000000", "email": ""}
     d["segment"] = {"segment_activity": "Transport de marchandises", "segment_fleet_size": "12"}
     d["opportunity"] = {"name": "Atlas - 3 camions", "close_date": "2026-12-31", "quantity": "3", "description": "Tracteurs"}
@@ -20,6 +21,9 @@ def test_new_account_plan_uses_references(mapping):
     by_ref = {s["referenceId"]: s for s in plan["subrequests"]}
     assert by_ref["account"]["body"]["Name"] == "ATLAS DÉMO TRANS"
     assert by_ref["account"]["body"]["RC_Number__c"] == "99001"
+    assert by_ref["account"]["body"]["BillingCountryCode"] == "MA"  # pays toujours Maroc
+    assert by_ref["account"]["body"]["Sole_Proprietorship__c"] == "Non"
+    assert by_ref["account"]["body"]["BillingCity"] == "Villetest"
     assert "common_name" not in by_ref["account"]["body"]  # champ vide / non mappé non envoyé
     assert by_ref["segment"]["body"]["Account__c"] == "@{account.id}"
     assert by_ref["contact"]["body"]["AccountId"] == "@{account.id}"
@@ -48,11 +52,14 @@ def test_validation_messages(mapping):
     assert validate(d, mapping) == []
     d["verified"] = False
     d["company"]["ice"] = "123"
+    d["company"]["postal_code"] = "5200"
+    d["company"]["city"] = ""
+    d["company"]["tax_id"] = ""
     d["contact"] = {"last_name": "", "mobile": "", "email": "pas-un-email"}
     d["segment"] = {}
     d["opportunity"]["close_date"] = ""
     errors = " | ".join(validate(d, mapping))
-    for expected in ["Cochez", "15 chiffres", "Nom du contact", "e-mail du contact invalide", "Activité du client", "Date de clôture"]:
+    for expected in ["Cochez", "15 chiffres", "5 chiffres", "Ville de facturation", "Numéro d'identification fiscale", "Nom du contact", "e-mail du contact invalide", "Activité du client", "Date de clôture"]:
         assert expected in errors
 
 
@@ -60,3 +67,9 @@ def test_existing_contact_requires_existing_account(mapping):
     d = complete_draft()
     d["contact_choice"] = {"mode": "existing", "id": "003000000000001AAA"}
     assert any("contact existant" in e for e in validate(d, mapping))
+
+
+def test_picklist_values_are_translated(mapping):
+    mapping["account"]["value_maps"]["sole_proprietorship"] = {"Oui": "Yes", "Non": "No"}
+    body = build_plan(complete_draft(), mapping)["subrequests"][0]["body"]
+    assert body["Sole_Proprietorship__c"] == "No"

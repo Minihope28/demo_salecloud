@@ -42,7 +42,9 @@ Une application web interne, **« Dossier client »**, qui regroupe la création
 | Coupure réseau pendant la création | Le dossier passe « à vérifier » ; au nouvel essai, l'application **recherche d'abord** si le compte a été créé, pour éviter un doublon |
 | Double clic sur « Créer » | Une seule création |
 | Échec de l'envoi d'une pièce jointe | Les fiches restent créées ; bouton **« Réessayer l'envoi des pièces »** |
-| Document scanné (image) | Signalé : saisie manuelle des champs (pas d'OCR dans le lot 1) |
+| PDF dont le texte est mal encodé (caractères bizarres) | Valeurs détectées et **jamais proposées** ; relues par OCR si Tesseract est installé, sinon champ vide « illisible, à saisir » |
+| Document scanné (image) | Lu par OCR si disponible, sinon saisie manuelle |
+| Adresse | Découpée en rue / code postal / ville ; pays toujours Maroc ; **code postal vérifié** avec le référentiel Barid Al-Maghrib |
 | RC et document fiscal ne concordent pas | Alerte affichée avant de continuer |
 | Valeur déjà corrigée par le commercial | **Jamais écrasée** par une lecture de document |
 
@@ -79,6 +81,8 @@ flowchart LR
 | Une **application connectée** OAuth (Connected App ou External Client App ; le type à privilégier est à confirmer avec l'admin) avec URL de rappel et PKCE | Admin Salesforce | Permettre la connexion des commerciaux |
 | Les **noms d'API réels** des champs : RC, ICE, IF, forme juridique, objet et champs de segmentation, étape d'opportunité par défaut, rôle du contact | Admin Salesforce + responsables commerciaux | Compléter `config/field_mapping.json` |
 | Un **échantillon anonymisé** de RC et de documents fiscaux (10 à 20) | Commerciaux | Calibrer la lecture automatique |
+| Le **référentiel des codes postaux** Barid Al-Maghrib (data.gov.ma) | BA / CRM | Vérifier ville et code postal |
+| **Tesseract** (OCR) sur le serveur | IT / infrastructure | Lire les PDF scannés ou mal encodés |
 | Un **hébergement** interne (conteneur Docker, HTTPS, un volume de stockage) | IT / infrastructure | Mise à disposition |
 | Validation **sécurité et données personnelles** | Sécurité IT, DPO | Conformité |
 
@@ -110,7 +114,7 @@ flowchart LR
 
 ## 9. Évolutions possibles (lots suivants)
 
-- **Lot 2 — Lecture des documents scannés (OCR)**, avec un service approuvé par Volvo, et calibration continue.
+- **Lot 2 — Fiabiliser la lecture des documents** : calibration sur de vrais RC, OCR arabe si utile, ou service de lecture documentaire approuvé par Volvo.
 - **Lot 3 — Demande d'affectation** : préremplir la demande depuis l'opportunité et produire le récapitulatif daté, pour supprimer le fichier Excel, les copier-coller et les captures d'écran vers Outlook ; faciliter le traitement par les 2 responsables.
 - **Lot 4 — Lien VSS4** : récupérer la référence du devis dans Salesforce au lieu de la recopier dans Chatter (après analyse du lien existant avec le référent VSS).
 - **Lot 5 — WhatsApp** : n'être étudié que si la manipulation des pièces reste un point de blocage important après le lot 1 (intégration officielle, licences spécifiques).

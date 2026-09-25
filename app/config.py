@@ -34,6 +34,10 @@ class Settings:
     max_upload_mb: int = 8
     max_pdf_pages: int = 40
     demo_samples: bool = True
+    ocr_mode: str = "auto"          # auto (si Tesseract est installé) | on | off
+    tesseract_cmd: str = ""
+    ocr_lang: str = "fra"
+    postal_codes_path: Path = BASE_DIR / "config" / "codes_postaux.csv"
 
     sf_login_url: str = "https://login.salesforce.com"
     sf_client_id: str = ""
@@ -67,6 +71,10 @@ def load_settings() -> Settings:
         max_upload_mb=int(os.getenv("MAX_UPLOAD_MB", "8")),
         max_pdf_pages=int(os.getenv("MAX_PDF_PAGES", "40")),
         demo_samples=_bool("DEMO_SAMPLES", mode == "mock"),
+        ocr_mode=os.getenv("OCR", "auto").strip().lower(),
+        tesseract_cmd=os.getenv("TESSERACT_CMD", ""),
+        ocr_lang=os.getenv("OCR_LANG", "fra"),
+        postal_codes_path=Path(os.getenv("POSTAL_CODES_PATH", str(BASE_DIR / "config" / "codes_postaux.csv"))),
         sf_login_url=os.getenv("SF_LOGIN_URL", "https://login.salesforce.com").rstrip("/"),
         sf_client_id=os.getenv("SF_CLIENT_ID", ""),
         sf_client_secret=os.getenv("SF_CLIENT_SECRET", ""),

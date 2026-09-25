@@ -4,22 +4,32 @@
 
   "account": {
     "sobject": "Account",
+    "_comment": "Champs du formulaire « Nouveau compte » de l'org Volvo. Pays : toujours Maroc, envoyé via defaults (BillingCountryCode = MA si les listes pays/région sont activées ; sinon remplacer par \"BillingCountry\": \"Maroc\" ou la valeur d'intégration configurée).",
     "fields": {
       "company_name": "Name",
-      "common_name": null,
+      "common_name": "Common_Name__c",
+      "company_phone": "Phone",
+      "sole_proprietorship": "Sole_Proprietorship__c",
       "rc_number": "RC_Number__c",
-      "legal_form": "Legal_Form__c",
-      "ice": "ICE__c",
+      "tax_id_type": "Tax_Id_Type__c",
       "tax_id": "Tax_Identification_Number__c",
       "address": "BillingStreet",
-      "city": "BillingCity",
       "postal_code": "BillingPostalCode",
-      "country": "BillingCountry",
-      "company_phone": "Phone",
-      "company_email": null,
-      "activity": null
+      "city": "BillingCity",
+      "region": null,
+      "ice": "ICE__c"
     },
-    "defaults": {},
+    "value_maps": {
+      "_comment": "Libellé affiché → valeur d'API de la liste de sélection Salesforce (à confirmer dans Setup).",
+      "sole_proprietorship": {"Oui": "Oui", "Non": "Non"},
+      "tax_id_type": {
+        "Numéro de TVA": "Numéro de TVA",
+        "Numéro d'identification fiscale": "Numéro d'identification fiscale"
+      }
+    },
+    "defaults": {
+      "BillingCountryCode": "MA"
+    },
     "match_on": ["rc_number", "ice"]
   },
 
