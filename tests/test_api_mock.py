@@ -146,3 +146,11 @@ def test_address_check_endpoint(client):
     assert ok["status"] == "ok"
     bad = client.get("/api/address/check", params={"city": "Villetest", "postal_code": "9910"}).json()
     assert bad["status"] == "error"
+
+
+def test_fiscal_document_fills_only_if_and_ice(client):
+    did = client.post("/api/drafts", headers=HEADERS).json()["id"]
+    draft = client.post(f"/api/drafts/{did}/documents/fiscal/sample", headers=HEADERS).json()
+    c = {k: v for k, v in draft["company"].items() if v}
+    assert c == {"tax_id": "99887766", "ice": "009988776600055", "tax_id_type": "Numéro d'identification fiscale"}
+    assert set(draft["documents"]["fiscal"]["fields"]) == {"tax_id", "ice"}

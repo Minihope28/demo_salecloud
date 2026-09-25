@@ -42,8 +42,9 @@ Une application web interne, **« Dossier client »**, qui regroupe la création
 | Coupure réseau pendant la création | Le dossier passe « à vérifier » ; au nouvel essai, l'application **recherche d'abord** si le compte a été créé, pour éviter un doublon |
 | Double clic sur « Créer » | Une seule création |
 | Échec de l'envoi d'une pièce jointe | Les fiches restent créées ; bouton **« Réessayer l'envoi des pièces »** |
-| PDF dont le texte est mal encodé (caractères bizarres) | Valeurs détectées et **jamais proposées** ; relues par OCR si Tesseract est installé, sinon champ vide « illisible, à saisir » |
-| Document scanné (image) | Lu par OCR si disponible, sinon saisie manuelle |
+| PDF dont le texte est mal encodé (caractères bizarres) | Valeurs détectées et **jamais proposées** ; relues par l'**OCR intégré** à l'application (rien à installer sur le serveur) ; sinon champ vide « illisible, à saisir » |
+| Document scanné (image) | Lu par l'OCR intégré, à vérifier |
+| Document fiscal | Seuls l'**IF** et le **numéro ICE** sont repris |
 | Adresse | Découpée en rue / code postal / ville ; pays toujours Maroc ; **code postal vérifié** avec le référentiel Barid Al-Maghrib |
 | RC et document fiscal ne concordent pas | Alerte affichée avant de continuer |
 | Valeur déjà corrigée par le commercial | **Jamais écrasée** par une lecture de document |
@@ -82,7 +83,6 @@ flowchart LR
 | Les **noms d'API réels** des champs : RC, ICE, IF, forme juridique, objet et champs de segmentation, étape d'opportunité par défaut, rôle du contact | Admin Salesforce + responsables commerciaux | Compléter `config/field_mapping.json` |
 | Un **échantillon anonymisé** de RC et de documents fiscaux (10 à 20) | Commerciaux | Calibrer la lecture automatique |
 | Le **référentiel des codes postaux** Barid Al-Maghrib (data.gov.ma) | BA / CRM | Vérifier ville et code postal |
-| **Tesseract** (OCR) sur le serveur | IT / infrastructure | Lire les PDF scannés ou mal encodés |
 | Un **hébergement** interne (conteneur Docker, HTTPS, un volume de stockage) | IT / infrastructure | Mise à disposition |
 | Validation **sécurité et données personnelles** | Sécurité IT, DPO | Conformité |
 

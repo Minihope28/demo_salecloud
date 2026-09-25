@@ -4,7 +4,7 @@ Application web interne qui évite au commercial de ressaisir à la main, écran
 
 **Le commercial :**
 
-1. dépose le **RC** et, s'il l'a, le **document fiscal** (PDF) ;
+1. dépose le **RC** et, s'il l'a, le **document fiscal** (PDF) : de ce dernier, seuls l'**identifiant fiscal (IF)** et le **numéro ICE** sont repris ;
 2. **vérifie** les informations lues automatiquement, présentées **comme dans le formulaire « Nouveau compte » de Salesforce** (chaque valeur indique sa source : document, page, OCR ou déduction). Une information absente ou illisible reste **vide** pour être saisie à la main ;
    - l'adresse est découpée en **rue / code postal / ville** ; le **code postal est vérifié** par rapport à la ville ; le pays est toujours **Maroc** ;
 3. vérifie que le client **n'existe pas déjà** dans Salesforce (même RC, même ICE ou nom proche) ;
@@ -36,14 +36,16 @@ Ouvrir <http://localhost:8000>, puis : **Nouveau dossier → Exemple fictif** (R
 - recherche de doublon : saisir le numéro RC `55555` → le compte fictif existant est proposé avec « même numéro RC » ;
 - **Coller un message WhatsApp** : le téléphone et l'e-mail sont repérés.
 
-## Lire les PDF « aux caractères bizarres » ou scannés : installer l'OCR (recommandé)
+## Lecture des PDF « aux caractères bizarres » ou scannés : OCR intégré
 
-Certains PDF (dont des RC) s'affichent correctement mais leur texte interne est **mal encodé** : une lecture directe donne des caractères du type `ΔjɰγΗϟ`. L'application **détecte ces valeurs et ne les propose jamais** (le champ reste vide, marqué « illisible dans le PDF »). Pour les **lire quand même**, elle peut relire la page comme une image avec **Tesseract** (OCR), s'il est installé :
+Certains PDF (dont des RC) s'affichent correctement mais leur texte interne est **mal encodé** : une lecture directe donne des caractères du type `ΔjɰγΗϟ`. L'application **détecte ces valeurs et ne les propose jamais**, puis **relit la page comme une image (OCR)**.
 
-- **Windows** : installer Tesseract (la version Windows la plus répandue est maintenue par UB Mannheim : <https://github.com/UB-Mannheim/tesseract/wiki>) ; pendant l'installation, dans « Additional language data », cocher **French**. L'application le trouve automatiquement dans `C:\Program Files\Tesseract-OCR\` ; sinon, renseigner `TESSERACT_CMD`. Sur un PC d'entreprise, l'installation peut nécessiter l'IT.
-- **Serveur / Docker** : déjà inclus dans le `Dockerfile`.
+L'OCR est **intégré** : il s'installe avec les autres composants par `pip install -r requirements.txt` (paquet **RapidOCR**, licence Apache-2.0, modèles inclus). **Aucun logiciel à installer** sur le poste ou le serveur, **aucune connexion Internet** nécessaire pour la lecture, et les documents ne quittent pas le serveur.
 
-Redémarrer l'application après l'installation. Les valeurs lues par OCR portent la mention « OCR » : à vérifier attentivement.
+- Nécessite **Python 3.11 ou 3.12** (RapidOCR n'est pas encore publié pour Python 3.13). Sur une version plus récente, l'application fonctionne sans OCR : les valeurs illisibles restent vides, à saisir.
+- Environ 2 à 3 secondes par page à relire ; seules les pages posant problème sont relues (5 au maximum).
+- Les valeurs lues par OCR portent la mention « OCR » et doivent être vérifiées (accents parfois perdus, ex. « DEMO » pour « DÉMO »).
+- Option : `OCR_ENGINE=tesseract` pour utiliser Tesseract s'il est déjà présent ; `OCR=off` pour désactiver l'OCR.
 
 ## Codes postaux : charger le référentiel officiel
 
@@ -92,7 +94,7 @@ Les tests couvrent la lecture des PDF, la construction des requêtes Salesforce,
 
 | Fichier | Rôle |
 |---|---|
-| `app/extraction.py` | Lecture des PDF (pypdf + PDFium, OCR Tesseract si besoin), détection des caractères illisibles, proposition de valeurs avec leur source |
+| `app/extraction.py` | Lecture des PDF (pypdf + PDFium, OCR intégré RapidOCR si besoin), détection des caractères illisibles, proposition de valeurs avec leur source |
 | `app/address.py` | Découpage de l'adresse, ville, code postal, vérification avec le référentiel Barid Al-Maghrib |
 | `app/salesforce.py` | Validation, construction de la requête Composite, client REST réel et org simulée |
 | `app/submission.py` | Envoi « tout ou rien », reprise sans doublon après erreur, envoi des pièces jointes |
@@ -106,7 +108,7 @@ Les tests couvrent la lecture des PDF, la construction des requêtes Salesforce,
 ## Limites connues
 
 - **Lecture des PDF** : les libellés recherchés sont des hypothèses sur la structure des RC et documents fiscaux marocains. Ils doivent être **calibrés sur un échantillon de vrais documents** (anonymisés) avant le pilote.
-- **Documents scannés ou mal encodés** : lus par OCR si Tesseract est installé, sinon signalés (saisie manuelle). La qualité de l'OCR dépend de la qualité du document.
+- **Documents scannés ou mal encodés** : relus par l'OCR intégré ; la qualité dépend de la qualité du document. Texte arabe non lu.
 - **Codes postaux** : le référentiel officiel doit être téléchargé et placé dans `config/` (voir plus haut).
 - **VSS4** : non connecté (étape manuelle depuis l'opportunité).
 - **WhatsApp** : non connecté ; le commercial télécharge les pièces puis les dépose.

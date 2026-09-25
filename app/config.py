@@ -34,7 +34,8 @@ class Settings:
     max_upload_mb: int = 8
     max_pdf_pages: int = 40
     demo_samples: bool = True
-    ocr_mode: str = "auto"          # auto (si Tesseract est installé) | on | off
+    ocr_mode: str = "auto"          # auto (si un moteur est disponible) | on | off
+    ocr_engine: str = "rapidocr"    # rapidocr (inclus, rien à installer) | tesseract (logiciel externe)
     tesseract_cmd: str = ""
     ocr_lang: str = "fra"
     postal_codes_path: Path = BASE_DIR / "config" / "codes_postaux.csv"
@@ -72,6 +73,7 @@ def load_settings() -> Settings:
         max_pdf_pages=int(os.getenv("MAX_PDF_PAGES", "40")),
         demo_samples=_bool("DEMO_SAMPLES", mode == "mock"),
         ocr_mode=os.getenv("OCR", "auto").strip().lower(),
+        ocr_engine=os.getenv("OCR_ENGINE", "rapidocr").strip().lower(),
         tesseract_cmd=os.getenv("TESSERACT_CMD", ""),
         ocr_lang=os.getenv("OCR_LANG", "fra"),
         postal_codes_path=Path(os.getenv("POSTAL_CODES_PATH", str(BASE_DIR / "config" / "codes_postaux.csv"))),

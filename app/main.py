@@ -15,7 +15,7 @@ from . import auth
 from .config import BASE_DIR, Settings, load_settings
 from .drafts import DOC_KINDS, DraftLocked, DraftNotFound, DraftStore
 from .address import COUNTRY, analyse_address, check_postal, load_reference
-from .extraction import DocumentError, TesseractOCR, analyse_document, find_tesseract
+from .extraction import DocumentError, RapidOCR, TesseractOCR, analyse_document, find_tesseract
 from .salesforce import MockSalesforce, SalesforceAuthError, SalesforceClient, SalesforceError, ValidationError, fold, build_plan, validate
 from .submission import SubmissionBusy, submit_draft
 
@@ -28,8 +28,24 @@ COMPARED_FIELDS = ["company_name", "rc_number", "ice", "tax_id"]
 COMPANY_FIELDS = ["company_name", "common_name", "company_phone", "sole_proprietorship", "rc_number", "tax_id_type",
                   "tax_id", "address", "postal_code", "city", "region", "ice"]
 HINT_FIELDS = ["legal_form", "manager_name", "activity", "capital"]
+FISCAL_FIELDS = {"tax_id", "ice"}  # du document fiscal, on ne reprend que l'IF et l'ICE
 TAX_ID_TYPES = ["Numéro de TVA", "Numéro d'identification fiscale", "GST Number", "ABN", "CPF Number", "CNPJ Number", "PAN Number"]
 DEFAULT_TAX_ID_TYPE = "Numéro d'identification fiscale"
+
+
+def _make_ocr(settings: Settings):
+    """OCR pour les PDF scannés ou mal encodés. RapidOCR par défaut : rien à installer hors pip."""
+    if settings.ocr_mode == "off":
+        return None
+    engine = None
+    if settings.ocr_engine == "tesseract":
+        cmd = find_tesseract(settings.tesseract_cmd)
+        engine = TesseractOCR(cmd, lang=settings.ocr_lang) if cmd else None
+    elif RapidOCR.available():
+        engine = RapidOCR()
+    if settings.ocr_mode == "on" and not engine:
+        raise RuntimeError(f"OCR=on mais le moteur « {settings.ocr_engine} » est indisponible.")
+    return engine
 
 
 def create_app(settings: Settings | None = None, sf_transport: httpx.BaseTransport | None = None) -> FastAPI:
@@ -39,10 +55,7 @@ def create_app(settings: Settings | None = None, sf_transport: httpx.BaseTranspo
     tokens = auth.TokenStore()
     mock_sf = None if settings.is_live else MockSalesforce(settings.mapping)
 
-    tess = None if settings.ocr_mode == "off" else find_tesseract(settings.tesseract_cmd)
-    if settings.ocr_mode == "on" and not tess:
-        raise RuntimeError("OCR=on mais Tesseract est introuvable (installer Tesseract ou renseigner TESSERACT_CMD).")
-    ocr = TesseractOCR(tess, lang=settings.ocr_lang) if tess else None
+    ocr = _make_ocr(settings)
 
     ref_paths = [settings.postal_codes_path, settings.postal_codes_path.with_suffix(".xlsx")]
     if not settings.is_live:
@@ -180,7 +193,7 @@ def create_app(settings: Settings | None = None, sf_transport: httpx.BaseTranspo
             "account_fields_sent": {k: bool(v) for k, v in m["account"]["fields"].items()},
             "country": COUNTRY,
             "tax_id_types": TAX_ID_TYPES,
-            "ocr": bool(ocr),
+            "ocr": ocr.name if ocr else None,
             "postal_reference": {"loaded": bool(postal_ref), "status": postal_status},
             "segment": {"enabled": bool(m.get("segment", {}).get("enabled")),
                         "fields": [{k: f.get(k) for k in ("key", "label", "type", "required", "options")}
@@ -235,7 +248,8 @@ def create_app(settings: Settings | None = None, sf_transport: httpx.BaseTranspo
             raise HTTPException(404, detail="Type de document inconnu.")
         if draft["status"] not in {"draft", "error"}:
             raise DraftLocked("Ce dossier a déjà été envoyé dans Salesforce.")
-        analysis = analyse_document(data, DOC_LABELS[kind], settings.max_upload_bytes, settings.max_pdf_pages, ocr=ocr)
+        analysis = analyse_document(data, DOC_LABELS[kind], settings.max_upload_bytes, settings.max_pdf_pages, ocr=ocr,
+                                    only=FISCAL_FIELDS if kind == "fiscal" else None)
         store.store_file(draft["id"], kind, data)
         safe_name = re.sub(r"[^\w.\- ]", "_", filename or f"{kind}.pdf")[:120]
         draft["documents"][kind] = {"filename": safe_name, "size": len(data), "pages": analysis["pages"],

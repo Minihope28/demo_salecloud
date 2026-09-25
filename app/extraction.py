@@ -18,6 +18,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import threading
 import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -67,6 +68,60 @@ def is_garbled(value: str) -> bool:
 
 
 # =========================================================================== OCR
+#
+# Moteur par défaut : RapidOCR (paquet Python, modèles inclus, aucun logiciel à installer sur le poste
+# ou le serveur, aucune connexion Internet). Tesseract reste possible en option (OCR_ENGINE=tesseract).
+
+def _render(data: bytes, index: int, dpi: int):
+    doc = pdfium.PdfDocument(data)
+    try:
+        return doc[index].render(scale=dpi / 72).to_pil().convert("RGB")
+    finally:
+        doc.close()
+
+
+def _boxes_to_lines(boxes: list[tuple[float, float, float, str]]) -> str:
+    """Reconstitue les lignes à partir des blocs (haut, bas, gauche, texte) détectés par l'OCR."""
+    lines: list[list] = []
+    for top, bottom, left, text in sorted(boxes):
+        centre, height = (top + bottom) / 2, max(bottom - top, 1)
+        for line in lines:
+            if abs(line[0] - centre) <= height * 0.5:
+                line[1].append((left, text))
+                break
+        else:
+            lines.append([centre, [(left, text)]])
+    return "\n".join("  ".join(t for _, t in sorted(parts)) for _, parts in sorted(lines, key=lambda l: l[0]))
+
+
+class RapidOCR:
+    name = "RapidOCR"
+
+    def __init__(self, dpi: int = 200):
+        from rapidocr_onnxruntime import RapidOCR as _Engine  # import tardif : chargement ~1 s
+        self._engine = _Engine()
+        self._lock = threading.Lock()
+        self.dpi = dpi
+
+    @staticmethod
+    def available() -> bool:
+        try:
+            import rapidocr_onnxruntime  # noqa: F401
+        except Exception:  # noqa: BLE001 - ImportError, ou dépendance native absente
+            return False
+        return pdfium is not None
+
+    def page_text(self, data: bytes, index: int) -> str:
+        import numpy as np
+        image = np.array(_render(data, index, self.dpi))
+        with self._lock:
+            result, _ = self._engine(image)
+        boxes = []
+        for box, text, _score in result or []:
+            ys, xs = [p[1] for p in box], [p[0] for p in box]
+            boxes.append((min(ys), max(ys), min(xs), text))
+        return _boxes_to_lines(boxes)
+
 
 def find_tesseract(setting: str | None = None) -> str | None:
     """Chemin de Tesseract : réglage explicite, PATH, puis emplacement Windows habituel."""
@@ -81,17 +136,15 @@ def find_tesseract(setting: str | None = None) -> str | None:
 
 
 class TesseractOCR:
+    name = "Tesseract"
+
     def __init__(self, cmd: str, lang: str = "fra", dpi: int = 300, timeout: int = 90, psm: int = 4):
         self.cmd, self.lang, self.dpi, self.timeout, self.psm = cmd, lang, dpi, timeout, psm
 
     def page_text(self, data: bytes, index: int) -> str:
         if pdfium is None:
             return ""
-        doc = pdfium.PdfDocument(data)
-        try:
-            image = doc[index].render(scale=self.dpi / 72).to_pil()
-        finally:
-            doc.close()
+        image = _render(data, index, self.dpi)
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "page.png"
             image.save(path)
@@ -144,7 +197,7 @@ def _pdfium_pages(data: bytes) -> list[str]:
         doc.close()
 
 
-def read_pdf(data: bytes, max_bytes: int, max_pages: int, ocr: TesseractOCR | None = None,
+def read_pdf(data: bytes, max_bytes: int, max_pages: int, ocr=None,
              max_ocr_pages: int = 5) -> PdfText:
     if len(data) > max_bytes:
         raise DocumentError(f"Fichier trop volumineux (maximum {max_bytes // (1024 * 1024)} Mo).")
@@ -175,7 +228,7 @@ def read_pdf(data: bytes, max_bytes: int, max_pages: int, ocr: TesseractOCR | No
         for i in pdf.problem_pages[:max_ocr_pages]:
             try:
                 pdf.ocr_pages[i] = ocr.page_text(data, i)
-            except (OSError, subprocess.SubprocessError):
+            except Exception:  # noqa: BLE001 - un échec d'OCR ne doit jamais bloquer le dépôt du document
                 pass
     return pdf
 
@@ -258,6 +311,14 @@ LEGAL_FORMS = [
 INDIVIDUAL_FORMS = {"Entreprise individuelle"}
 
 ICE_PATTERN = re.compile(r"(?<!\d)(\d{15})(?!\d)")
+
+def _loose(label: str) -> str:
+    """L'OCR colle parfois les mots (« juridiquedela ») : les espaces des libellés deviennent facultatifs."""
+    return label.replace(" ", r"\s*")
+
+
+for _rule in FIELD_RULES.values():
+    _rule["labels"] = [_loose(lab) for lab in _rule["labels"]]
 ALL_LABELS = [lab for rule in FIELD_RULES.values() for lab in rule["labels"]]
 NEXT_LABEL = re.compile(r"\s\|\s|\s(?=(?:" + "|".join(ALL_LABELS) + r")\s*[:\-–])")
 
@@ -384,10 +445,13 @@ def extract_fields(pdf: PdfText, source: str) -> tuple[dict[str, dict], set[str]
 
 
 def analyse_document(data: bytes, source: str, max_bytes: int, max_pages: int,
-                     ocr: TesseractOCR | None = None) -> dict:
+                     ocr=None, only: set[str] | None = None) -> dict:
     """Point d'entrée : lit le PDF et renvoie un résumé exploitable par l'interface."""
     pdf = read_pdf(data, max_bytes=max_bytes, max_pages=max_pages, ocr=ocr)
     fields, unreadable = extract_fields(pdf, source)
+    if only is not None:  # ex. document fiscal : seulement l'IF et l'ICE
+        fields = {k: v for k, v in fields.items() if k in only}
+        unreadable = {k for k in unreadable if k in only}
     problems = pdf.problem_pages
     ocr_used = any(v.strip() for v in pdf.ocr_pages.values())
 

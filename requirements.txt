@@ -7,3 +7,6 @@ openpyxl>=3.1
 httpx>=0.27
 itsdangerous>=2.1
 python-multipart>=0.0.9
+# OCR intégré (PDF scannés ou mal encodés) : modèles inclus, aucun logiciel externe à installer.
+# Ce paquet n'existe pas encore pour Python 3.13+ : utiliser Python 3.11 ou 3.12.
+rapidocr_onnxruntime>=1.4.4; python_version < "3.13"

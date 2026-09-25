@@ -111,3 +111,20 @@ def test_legal_form_label_variant_and_lowercase_sa():
     data = _pdf(["Nom : Ali EXEMPLE", "Activité : transport pour sa clientèle", "Adresse : 3 rue Test"])
     fields = analyse_document(data, "RC", LIMIT, 40)["fields"]
     assert "legal_form" not in fields  # « sa » n'est pas le sigle SA
+
+
+@pytest.mark.skipif(not __import__("app.extraction", fromlist=["RapidOCR"]).RapidOCR.available(), reason="RapidOCR non installé")
+def test_builtin_ocr_reads_garbled_values():
+    from app.extraction import RapidOCR
+    result = analyse_document(BROKEN.read_bytes(), "RC", LIMIT, 40, ocr=RapidOCR())
+    assert result["ocr_used"] is True and result["unreadable"] == []
+    assert result["fields"]["company_name"]["method"] == "OCR"
+    assert result["fields"]["company_name"]["value"].replace("É", "E") == "ATLAS DEMO TRANS"
+    assert "Villetest" in result["fields"]["address"]["value"]
+    assert result["fields"]["legal_form"]["value"] == "SARL AU"
+
+
+def test_fiscal_document_only_keeps_if_and_ice():
+    data = (BASE_DIR / "samples" / "Attestation_fiscale_exemple_fictif.pdf").read_bytes()
+    fields = analyse_document(data, "Document fiscal", LIMIT, 40, only={"tax_id", "ice"})["fields"]
+    assert set(fields) == {"tax_id", "ice"}

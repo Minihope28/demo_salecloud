@@ -286,7 +286,7 @@ function renderStep1() {
       <p class="muted">Téléchargez les pièces reçues sur WhatsApp, puis déposez-les ici. Elles seront jointes au compte dans Salesforce.</p>
       <div class="docs">
         ${docBlock("rc", "Registre de commerce (RC)", "Extrait du RC envoyé par le client.")}
-        ${docBlock("fiscal", "Document fiscal — si disponible", "Bilan, attestation IF/ICE… Facultatif : l'IF peut aussi être saisi à la main.")}
+        ${docBlock("fiscal", "Document fiscal — si disponible", "Bilan, attestation… Seuls l'identifiant fiscal (IF) et le numéro ICE en sont repris. Facultatif.")}
       </div>
       ${conflicts.length ? `<div class="alert warn"><strong>Les deux documents ne concordent pas :</strong><ul>
         ${conflicts.map((c) => `<li>${esc(LABELS[c.field] || c.field)} : RC « ${esc(c.rc)} » / document fiscal « ${esc(c.fiscal)} »</li>`).join("")}
