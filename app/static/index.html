@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dossier client</title>
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo" aria-hidden="true">DC</span>
+      <div>
+        <strong>Dossier client</strong>
+        <small>Préparation Salesforce</small>
+      </div>
+    </div>
+    <div class="topbar-right">
+      <span id="mode-badge" class="badge"></span>
+      <span id="user-name" class="muted"></span>
+      <button id="logout" class="link hidden" type="button">Se déconnecter</button>
+    </div>
+  </header>
+
+  <main id="app" aria-live="polite">
+    <p class="muted center">Chargement…</p>
+  </main>
+
+  <div id="toast" class="toast hidden" role="status"></div>
+  <script src="/static/app.js"></script>
+</body>
+</html>

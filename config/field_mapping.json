@@ -1,0 +1,89 @@
+{
+  "_comment": "Correspondance entre les champs de l'application et les champs Salesforce de l'org Volvo. Les noms se terminant par __c sont des HYPOTHÈSES à remplacer par les vrais noms d'API (Setup > Object Manager). Une valeur null signifie : ne pas envoyer ce champ.",
+  "api_version": "v62.0",
+
+  "account": {
+    "sobject": "Account",
+    "fields": {
+      "company_name": "Name",
+      "common_name": null,
+      "rc_number": "RC_Number__c",
+      "legal_form": "Legal_Form__c",
+      "ice": "ICE__c",
+      "tax_id": "Tax_Identification_Number__c",
+      "address": "BillingStreet",
+      "city": "BillingCity",
+      "postal_code": "BillingPostalCode",
+      "country": "BillingCountry",
+      "company_phone": "Phone",
+      "company_email": null,
+      "activity": null
+    },
+    "defaults": {},
+    "match_on": ["rc_number", "ice"]
+  },
+
+  "segment": {
+    "enabled": true,
+    "_comment": "Étape « segmentation » observée dans le parcours actuel. Objet et champs à confirmer avec l'admin Salesforce.",
+    "sobject": "Segmentation__c",
+    "account_lookup_field": "Account__c",
+    "defaults": {},
+    "fields": [
+      {
+        "key": "segment_activity",
+        "label": "Activité du client",
+        "sf_field": "Activity__c",
+        "type": "select",
+        "required": true,
+        "options": ["Transport de marchandises", "Transport de voyageurs", "BTP / Construction", "Distribution", "Autre"]
+      },
+      {
+        "key": "segment_fleet_size",
+        "label": "Taille de flotte (nombre de véhicules)",
+        "sf_field": "Fleet_Size__c",
+        "type": "number",
+        "required": false
+      }
+    ]
+  },
+
+  "contact": {
+    "sobject": "Contact",
+    "fields": {
+      "first_name": "FirstName",
+      "last_name": "LastName",
+      "title": "Title",
+      "mobile": "MobilePhone",
+      "email": "Email"
+    },
+    "defaults": {}
+  },
+
+  "opportunity": {
+    "enabled": true,
+    "sobject": "Opportunity",
+    "fields": {
+      "name": "Name",
+      "description": "Description",
+      "quantity": null,
+      "close_date": "CloseDate"
+    },
+    "defaults": {
+      "StageName": "Prospecting"
+    },
+    "contact_role": {
+      "enabled": true,
+      "role": "Decision Maker",
+      "is_primary": true
+    }
+  },
+
+  "files": {
+    "link_to": ["account"],
+    "titles": {
+      "rc": "Registre de commerce",
+      "fiscal": "Document fiscal"
+    }
+  }
+}
